@@ -1,7 +1,8 @@
-﻿# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-python -m pip install --user -r (Join-Path $ScriptDir 'requirements.txt')
+$PythonExe = if ($env:SPRINGPEACE_PYTHON) { $env:SPRINGPEACE_PYTHON } else { 'python' }
+& $PythonExe -m pip install --user -r (Join-Path $ScriptDir 'requirements.txt')
 
 $DataArgs = @(
   '--add-data', "$(Join-Path $ScriptDir 'presets.json');.",
@@ -14,7 +15,7 @@ if (Test-Path $VendorDir) {
   $DataArgs += @('--add-data', "$VendorDir;vendor")
 }
 
-python -m PyInstaller `
+& $PythonExe -m PyInstaller `
   --onefile `
   --windowed `
   --name SpringPeace `

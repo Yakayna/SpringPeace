@@ -6,7 +6,7 @@ SpringPeace is a GPL-3.0-or-later GUI/CLI for generating Android `boot.img` payl
 
 ## Pre-release / Tải bản test
 
-Use the GitHub Release asset `SpringPeace-0.1-pre.zip` for the bundled one-click package. The zip contains:
+Use the GitHub Release asset `SpringPeace-0.2-pre.zip` for the bundled one-click package. The zip contains:
 
 - `SpringPeace.exe`
 - `Tools/platform-tools` (ADB)
@@ -14,11 +14,16 @@ Use the GitHub Release asset `SpringPeace-0.1-pre.zip` for the bundled one-click
 - `Tools/exploit` (patched exploit engine)
 - `Lang/vi.json`, `Lang/en.json`
 
+## Kernel modes / Chế độ kernel
+
+- **Snapdragon (current / hiện tại):** common ARM64 candidate sweep used for the current Xiaomi and OnePlus/OPPO 6.12.x Snapdragon tests.
+- **MTK experimental / MTK thử nghiệm:** seed values derived from Redmi K80 Ultra `preload.so` analysis. The sample has `p0_data_alias` delta `0x3f80000000`, implying `P0_KERNEL_PHYS_LOAD=0x4000000000` when `P0_PHYS_OFFSET=0x80000000`. Exact target `boot.img` is still required.
+
 ## Scope note / Lưu ý phạm vi test
 
-**VI:** Bản hiện tại mới test trên Xiaomi và OnePlus/OPPO kernel 6.12.x chạy chip Snapdragon. Thiết bị khác có thể không chạy đúng và có thể reboot.
+**VI:** Bản hiện tại mới test trên Xiaomi và OnePlus/OPPO kernel 6.12.x chạy chip Snapdragon. MTK hiện là thử nghiệm dựa trên phân tích payload Redmi K80 Ultra. Thiết bị khác có thể không chạy đúng và có thể reboot.
 
-**EN:** This build has only been tested on Xiaomi and OnePlus/OPPO 6.12.x kernels running Snapdragon chipsets. Other devices may not work and may reboot.
+**EN:** This build has only been tested on Xiaomi and OnePlus/OPPO 6.12.x kernels running Snapdragon chipsets. MTK is experimental based on Redmi K80 Ultra payload analysis. Other devices may not work and may reboot.
 
 ## Temporary-root note / Lưu ý root tạm thời
 
@@ -34,6 +39,10 @@ Use the GitHub Release asset `SpringPeace-0.1-pre.zip` for the bundled one-click
 4. Generate `target.h` and compile `payload.so` with Android NDK/LLVM.
 5. Push each runnable candidate through ADB and stop when root is confirmed.
 
+
+### Check boot.img and compressed kernels
+
+When `boot.img` stores the kernel as `lz4-legacy`, top-level `text_offset`, `image_size`, `image_flags`, and `linux_version` may be `null`. SpringPeace 0.2 decompresses the kernel for display and adds a `decompressed_kernel` object with the ARM64 Image metadata.
 ## Upstream credit
 
 SpringPeace wraps and patches the public research implementation from [`x-spy/CVE-2026-43499-popsicle`](https://github.com/x-spy/CVE-2026-43499-popsicle). The app UI intentionally uses the generic term “exploit”; upstream details are documented here.
@@ -46,14 +55,17 @@ SpringPeace wraps and patches the public research implementation from [`x-spy/CV
 - `tools/springpeace-oneclick/patches/` — generator compatibility patch.
 - `tools/springpeace-oneclick/assets/` — Mika app image/icon from the local user-supplied image.
 - `docs/SPRINGPEACE_BOOTIMG_TOOL_NOTES.md` — boot.img/candidate notes.
+- `docs/MTK_PRELOAD_ANALYSIS.md` — Redmi K80 Ultra MTK preload.so analysis notes.
+- `.github/workflows/springpeace-prerelease.yml` — Windows build and pre-release workflow.
 - `bin/SpringPeace.exe` — convenience GUI build without the large bundled Tools folder.
 
 ## Build GUI from source
 
-Install Python 3.14+ and run:
+Use Python 3.13 on Windows. Python 3.14 on this machine currently breaks Tcl/Tk discovery for PyInstaller windowed builds.
 
 ```powershell
-python -m pip install --user -r .\tools\springpeace-oneclick\requirements.txt
+$env:SPRINGPEACE_PYTHON='C:\Users\Yakayn\AppData\Local\Programs\Python\Python313\python.exe'
+& $env:SPRINGPEACE_PYTHON -m pip install --user -r .\tools\springpeace-oneclick\requirements.txt
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\springpeace-oneclick\build_gui_exe.ps1
 ```
 

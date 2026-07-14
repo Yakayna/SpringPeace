@@ -112,3 +112,16 @@ Không đưa ROM, `boot.img`, payload cá nhân, log lớn, build cache hoặc f
 - Sửa lỗi `RuntimeError: lost sys.stdin` khi GUI windowed gặp lỗi trong backend.
 - `Tools\exploit` đã patch sẵn thì không gọi `git apply`, tránh lỗi `[WinError 2] The system cannot find the file specified` trên máy không có `git` trong PATH.
 - Nếu còn thiếu executable khác, log mới sẽ ghi rõ `missing executable: ...` để biết thiếu ADB/clang/objdump/git hay file khác.
+
+## 2026-07-14 - MTK / Redmi K80 Ultra preload.so analysis
+
+Added `docs/MTK_PRELOAD_ANALYSIS.md`.
+
+Key result: the Redmi K80 Ultra MTK sample `preload.so` has `p0_data_alias` delta `0x3f80000000`, implying `P0_KERNEL_PHYS_LOAD=0x4000000000` when `P0_PHYS_OFFSET=0x80000000`. The binary also embeds `su`, `ksud`/KernelSU userspace, and a WEBP asset, so it is much larger than normal payload candidates.
+
+SpringPeace now has two build choices in the GUI:
+
+- Snapdragon (current): existing low p0load sweep.
+- MTK experimental: high p0load sweep seeded by the Redmi K80 Ultra payload analysis.
+
+The MTK payload is not universal; use exact `boot.img` generation for each target firmware.

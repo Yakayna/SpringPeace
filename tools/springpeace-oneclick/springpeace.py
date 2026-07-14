@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""SpringPeace one-click builder for x-spy CVE-2026-43499 payloads.
+"""SpringPeace one-click builder for CVE-2026-43499 payload candidates.
 
-This wrapper keeps the exploit source in the upstream x-spy repository and
-builds target-specific payload candidates from a boot.img plus a physical-load
-profile. It is intended to be packaged with PyInstaller for a Windows .exe.
+This wrapper builds target-specific payload candidates from a boot.img plus a
+physical-load profile. It is intended to be packaged with PyInstaller for a
+Windows .exe.
 """
 
 from __future__ import annotations
@@ -59,12 +59,12 @@ DEFAULT_LOADS = [
 ]
 
 SCOPE_NOTICE_VI = (
-    'Lưu ý: bản hiện tại mới test trên Xiaomi và OnePlus/OPPO kernel 6.12.x chạy chip Snapdragon. Thiết'
-    ' bị khác có thể không chạy đúng và có thể reboot.'
+    'Lưu ý: bản hiện tại mới test trên Xiaomi và OnePlus/OPPO kernel 6.12.x chạy chip Snapdragon; MTK '
+    'hiện là thử nghiệm dựa trên payload Redmi K80 Ultra. Thiết bị khác có thể không chạy đúng và có thể reboot.'
 )
 SCOPE_NOTICE_EN = (
-    'Note: this build has only been tested on Xiaomi and OnePlus/OPPO 6.12.x kernels running Sna'
-    'pdragon chipsets. Other devices may not work and may reboot.'
+    'Note: this build has been tested on Xiaomi and OnePlus/OPPO 6.12.x Snapdragon kernels; MTK is '
+    'experimental based on the Redmi K80 Ultra payload. Other devices may not work and may reboot.'
 )
 TEMP_ROOT_NOTICE_VI = (
     'Root kiểu này không ổn định, phù hợp cho mục đích tạm thời như thay file vào app, thao tác nhanh, '
@@ -151,7 +151,7 @@ def run_python_script_inprocess(script: Path, argv: Sequence[str | Path], cwd: P
                                 env: dict[str, str] | None = None) -> SimpleNamespace:
     """Run a Python script inside this interpreter and capture stdout/stderr.
 
-    This lets the windowed one-file GUI execute x-spy generate_target.py without
+    This lets the windowed one-file GUI execute exploit generate_target.py without
     depending on python.exe being installed separately.
     """
     old_argv = sys.argv[:]
@@ -263,6 +263,45 @@ def inspect_boot(path: Path) -> BootInfo:
         image_flags=image_flags,
         linux_version=version,
     )
+
+
+def boot_info_dict(info: BootInfo) -> dict:
+    return info.__dict__ | {"path": str(info.path)}
+
+
+def arm64_image_metadata(image: bytes) -> dict:
+    kind = "raw-arm64-image" if len(image) >= 0x40 and image[0x38:0x3C] == b"ARM\x64" else "unknown"
+    meta = {
+        "kernel_kind": kind,
+        "kernel_size": len(image),
+        "kernel_sha256": hashlib.sha256(image).hexdigest(),
+        "text_offset": None,
+        "image_size": None,
+        "image_flags": None,
+        "linux_version": None,
+    }
+    if kind == "raw-arm64-image":
+        meta["text_offset"] = read_u64(image, 8)
+        meta["image_size"] = read_u64(image, 16)
+        meta["image_flags"] = read_u64(image, 24)
+    m = re.search(rb"Linux version [^\x00\n]{1,220}", image)
+    if m:
+        meta["linux_version"] = m.group(0).decode("latin-1", "replace")
+    return meta
+
+
+def inspect_boot_report(path: Path) -> dict:
+    """Return display metadata; for LZ4 kernels, also inspect decompressed Image."""
+    info = inspect_boot(path)
+    report = boot_info_dict(info)
+    if info.kernel_kind == "lz4-legacy":
+        data = path.read_bytes()
+        kernel = data[info.kernel_offset:info.kernel_offset + info.kernel_size]
+        try:
+            report["decompressed_kernel"] = arm64_image_metadata(lz4_legacy_decompress(kernel))
+        except Exception as exc:
+            report["decompressed_kernel_error"] = str(exc)
+    return report
 
 
 def lz4_legacy_decompress(blob: bytes) -> bytes:
@@ -383,7 +422,7 @@ def apply_compat_patch(repo: Path) -> str:
     patch = SCRIPT_DIR / "patches" / "xspy-generate-target-compat.patch"
     gen_path = repo / "generate_target.py"
     text = gen_path.read_text(encoding="utf-8", errors="replace") if gen_path.exists() else ""
-    if "O_BINARY" in text and "select_bridge" in text and 'offsets_for("kallsyms_num_syms")' in text:
+    if "O_BINARY" in text and "collect_marker_candidates" in text and "select_bridge" in text and 'offsets_for("kallsyms_num_syms")' in text:
         return "already present"
     if not patch.exists():
         return "missing patch file"
@@ -395,7 +434,7 @@ def apply_compat_patch(repo: Path) -> str:
         run([git_exe, "apply", patch], cwd=repo)
         return "applied"
     text = gen_path.read_text(encoding="utf-8", errors="replace") if gen_path.exists() else ""
-    if "O_BINARY" in text and "select_bridge" in text and 'offsets_for("kallsyms_num_syms")' in text:
+    if "O_BINARY" in text and "collect_marker_candidates" in text and "select_bridge" in text and 'offsets_for("kallsyms_num_syms")' in text:
         return "already present"
     return "patch skipped: " + check.stdout.splitlines()[-1] if check.stdout else "patch skipped"
 
@@ -471,8 +510,7 @@ def parse_load_list(text: str | None, preset: dict | None) -> list[int]:
 
 def cmd_info(args: argparse.Namespace) -> int:
     print_scope_notice()
-    info = inspect_boot(Path(args.boot))
-    print(json.dumps(info.__dict__ | {"path": str(info.path)}, indent=2, default=str))
+    print(json.dumps(inspect_boot_report(Path(args.boot)), indent=2, default=str))
     return 0
 
 
@@ -487,7 +525,7 @@ def cmd_make(args: argparse.Namespace) -> int:
     patch_state = "not requested"
     if args.compat_patch:
         patch_state = apply_compat_patch(xspy)
-        log(f"x-spy compat patch: {patch_state}")
+        log(f"exploit compat patch: {patch_state}")
     ndk = resolve_ndk(args.ndk)
     clang, objdump, sysroot = resolve_clang(ndk, args.api)
     if args.llvm_objdump:
@@ -600,7 +638,7 @@ def cmd_about(args: argparse.Namespace) -> int:
 
 def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="SpringPeace boot.img -> x-spy payload builder",
+        description="SpringPeace boot.img -> exploit payload builder",
         epilog=SCOPE_NOTICE,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -623,7 +661,7 @@ def make_parser() -> argparse.ArgumentParser:
     make.add_argument("--ndk", default=None)
     make.add_argument("--api", type=int, default=35)
     make.add_argument("--llvm-objdump", default=None)
-    make.add_argument("--python", default=None, help="Python interpreter for x-spy generate_target.py; exe builds default to python on PATH")
+    make.add_argument("--python", default=None, help="Python interpreter for exploit generate_target.py; exe builds default to python on PATH")
     make.add_argument("--p0-phys-offset", default=None)
     make.add_argument("--p0-kernel-phys-load", default=None,
                       help="single value or comma-separated candidate list; default comes from preset")

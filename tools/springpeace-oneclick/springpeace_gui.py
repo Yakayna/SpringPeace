@@ -34,11 +34,15 @@ TR = {
     "vi": {
         "lang_name": "VI",
         "headline": "Dựa trên CVE-2026-43499, boot.img → payload để root thiết bị của bạn.",
-        "scope": "Bản hiện tại mới test trên Xiaomi và OnePlus/OPPO kernel 6.12.x chạy chip Snapdragon. Thiết bị khác có thể không chạy đúng và có thể reboot.",
+        "scope": "Bản hiện tại mới test trên Xiaomi và OnePlus/OPPO kernel 6.12.x chạy chip Snapdragon; MTK hiện là thử nghiệm dựa trên payload Redmi K80 Ultra. Thiết bị khác có thể không chạy đúng và có thể reboot.",
         "boot": "boot.img",
         "boot_hint": "Chọn boot.img gốc của firmware thiết bị",
         "output": "Thư mục output (tuỳ chọn)",
         "output_hint": "Để trống: tự tạo thư mục SpringPeace-output",
+        "kernel_type": "Loại kernel",
+        "snapdragon": "Snapdragon (hiện tại)",
+        "mtk": "MTK thử nghiệm",
+        "kernel_hint": "Snapdragon dùng sweep hiện tại. MTK dùng sweep p0load cao 0x4000000000 rút từ payload Redmi K80 Ultra; vẫn cần boot.img đúng máy.",
         "choose": "Chọn",
         "one_click": "One-click Root",
         "build_only": "Build payload thôi",
@@ -69,7 +73,7 @@ TR = {
         "sweep_title": "Build candidate sweep là gì?",
         "sweep": (
             "boot.img thường không chứa chắc chắn địa chỉ physical load của kernel. Candidate sweep là build nhiều payload với các p0load phổ biến "
-            "\u0111\u1ec3 t\u00ecm b\u1ea3n kh\u1edbp. Trong b\u1ea3n 0.1, One-click d\u00f9ng c\u00e1ch n\u00e0y t\u1ef1 \u0111\u1ed9ng \u0111\u1ec3 kh\u00f4ng c\u1ea7n ch\u1ecdn c\u1ea5u h\u00ecnh."
+            "\u0111\u1ec3 t\u00ecm b\u1ea3n kh\u1edbp. Trong b\u1ea3n 0.2, One-click d\u00f9ng c\u00e1ch n\u00e0y t\u1ef1 \u0111\u1ed9ng theo lo\u1ea1i kernel b\u1ea1n ch\u1ecdn."
         ),
         "select_boot_first": "Hãy chọn boot.img trước.",
         "running": "Đang chạy...",
@@ -80,11 +84,15 @@ TR = {
     "en": {
         "lang_name": "EN",
         "headline": "Based on CVE-2026-43499, boot.img → payload to root your device.",
-        "scope": "This build has only been tested on Xiaomi and OnePlus/OPPO 6.12.x kernels running Snapdragon chipsets. Other devices may not work and may reboot.",
+        "scope": "This build has been tested on Xiaomi and OnePlus/OPPO 6.12.x Snapdragon kernels; MTK is experimental based on the Redmi K80 Ultra payload. Other devices may not work and may reboot.",
         "boot": "boot.img",
         "boot_hint": "Select the stock boot.img from the device firmware",
         "output": "Output folder (optional)",
         "output_hint": "Empty: create SpringPeace-output automatically",
+        "kernel_type": "Kernel type",
+        "snapdragon": "Snapdragon (current)",
+        "mtk": "MTK experimental",
+        "kernel_hint": "Snapdragon uses the current sweep. MTK uses the high 0x4000000000 p0load sweep extracted from the Redmi K80 Ultra payload; exact device boot.img is still required.",
         "choose": "Choose",
         "one_click": "One-click Root",
         "build_only": "Build payload only",
@@ -115,7 +123,7 @@ TR = {
         "sweep_title": "What is candidate sweep?",
         "sweep": (
             "boot.img often does not prove the kernel physical load address. Candidate sweep builds several payloads with common p0load values "
-            "to find a matching build. In 0.1, One-click uses this automatically so no strategy selection is needed."
+            "to find a matching build. In 0.2, One-click uses this automatically based on the selected kernel type."
         ),
         "select_boot_first": "Select boot.img first.",
         "running": "Running...",
@@ -185,6 +193,7 @@ class SpringPeaceGUI:
 
         self.boot_var = tk.StringVar(value="")
         self.output_var = tk.StringVar(value="")
+        self.kernel_var = tk.StringVar(value="snapdragon")
         self.status_var = tk.StringVar(value="")
         self.tool_status_var = tk.StringVar(value="")
         self.progress_var = tk.DoubleVar(value=0)
@@ -302,17 +311,28 @@ class SpringPeaceGUI:
         self.boot_hint_lbl = tk.Label(input_card, bg=CARD, fg=MUTED, font=("Segoe UI", 9))
         self.boot_hint_lbl.grid(row=2, column=0, sticky="w", pady=(4, 12))
 
+        self.kernel_lbl = tk.Label(input_card, bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold"))
+        self.kernel_lbl.grid(row=3, column=0, sticky="w", pady=(0, 4))
+        kernel_row = tk.Frame(input_card, bg=CARD)
+        kernel_row.grid(row=4, column=0, sticky="ew")
+        self.snap_btn = tk.Radiobutton(kernel_row, text="", variable=self.kernel_var, value="snapdragon", bg=CARD, fg=TEXT, selectcolor="#EADDFF", activebackground=CARD, font=("Segoe UI", 10))
+        self.snap_btn.pack(side=tk.LEFT, padx=(0, 18))
+        self.mtk_btn = tk.Radiobutton(kernel_row, text="", variable=self.kernel_var, value="mtk", bg=CARD, fg=TEXT, selectcolor="#EADDFF", activebackground=CARD, font=("Segoe UI", 10))
+        self.mtk_btn.pack(side=tk.LEFT)
+        self.kernel_hint_lbl = tk.Label(input_card, bg=CARD, fg=MUTED, font=("Segoe UI", 9), wraplength=680, justify=tk.LEFT)
+        self.kernel_hint_lbl.grid(row=5, column=0, sticky="w", pady=(4, 12))
+
         self.output_lbl = tk.Label(input_card, bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold"))
-        self.output_lbl.grid(row=3, column=0, sticky="w", pady=(0, 4))
+        self.output_lbl.grid(row=6, column=0, sticky="w", pady=(0, 4))
         outrow = tk.Frame(input_card, bg=CARD)
-        outrow.grid(row=4, column=0, sticky="ew")
+        outrow.grid(row=7, column=0, sticky="ew")
         outrow.columnconfigure(0, weight=1)
         self.output_entry = ttk.Entry(outrow, textvariable=self.output_var)
         self.output_entry.grid(row=0, column=0, sticky="ew")
         self.output_btn = ttk.Button(outrow, text="", command=self.choose_output, style="Soft.TButton")
         self.output_btn.grid(row=0, column=1, padx=(8, 0))
         self.output_hint_lbl = tk.Label(input_card, bg=CARD, fg=MUTED, font=("Segoe UI", 9))
-        self.output_hint_lbl.grid(row=5, column=0, sticky="w", pady=(4, 0))
+        self.output_hint_lbl.grid(row=8, column=0, sticky="w", pady=(4, 0))
 
         actions = tk.Frame(left, bg=BG)
         actions.pack(fill=tk.X, pady=12)
@@ -375,6 +395,10 @@ class SpringPeaceGUI:
         self.root_note_lbl.configure(text=f"{self.t("root_note_title")}: {self.t("root_note")}")
         self.boot_lbl.configure(text=self.t("boot"))
         self.boot_hint_lbl.configure(text=self.t("boot_hint"))
+        self.kernel_lbl.configure(text=self.t("kernel_type"))
+        self.snap_btn.configure(text=self.t("snapdragon"))
+        self.mtk_btn.configure(text=self.t("mtk"))
+        self.kernel_hint_lbl.configure(text=self.t("kernel_hint"))
         self.output_lbl.configure(text=self.t("output"))
         self.output_hint_lbl.configure(text=self.t("output_hint"))
         self.boot_btn.configure(text=self.t("choose"))
@@ -463,9 +487,14 @@ class SpringPeaceGUI:
     def find_bundled_exploit(self) -> Path | None:
         candidates: list[Path] = []
         for td in tools_dirs():
-            candidates += [td / "exploit", td / "exploit"]
-        candidates += [app_dir() / "vendor" / "exploit", app_dir() / "vendor" / "exploit"]
+            candidates += [td / "exploit", td / "x-spy", td / "CVE-2026-43499-popsicle"]
+        candidates += [app_dir() / "vendor" / "exploit", app_dir() / "vendor" / "x-spy"]
+        seen: set[Path] = set()
         for c in candidates:
+            c = c.resolve() if c.exists() else c
+            if c in seen:
+                continue
+            seen.add(c)
             if (c / "generate_target.py").exists() and (c / "source" / "src").exists():
                 return c
         return None
@@ -544,18 +573,19 @@ class SpringPeaceGUI:
         if not boot.exists():
             raise RuntimeError(self.t("select_boot_first"))
         info = springpeace.inspect_boot(boot)
-        self.q.put(json.dumps(info.__dict__ | {"path": str(info.path)}, indent=2, default=str) + "\n")
+        self.q.put(json.dumps(springpeace.inspect_boot_report(boot), indent=2, default=str) + "\n")
         return info
 
     def choose_strategy(self, info: springpeace.BootInfo) -> tuple[str, bool]:
-        # 0.1 uses the generic candidate strategy only; no visible kernel selection.
+        if self.kernel_var.get() == "mtk":
+            return "common-mtk-candidates", True
         return "common-arm64-candidates", True
 
     def sanitize_log(self, text: str) -> str:
-        return (text.replace("exploit", "exploit")
+        return (text.replace("x-spy", "exploit")
                     .replace("X-SPY", "exploit")
-                    .replace("exploit", "exploit")
-                    .replace("strategy", "strategy"))
+                    .replace("xspy", "exploit")
+                    .replace("profile", "strategy"))
 
 
     def run_springpeace(self, args: list[str]) -> int:
@@ -574,9 +604,10 @@ class SpringPeaceGUI:
         exploit_work = self.ensure_exploit_work(out)
         info = self.inspect_info()
         strategy, runnable = self.choose_strategy(info)
-        candidate_count = len(springpeace.load_presets().get("common-arm64-candidates", {}).get("candidate_loads", [])) or 1
+        preset_data = springpeace.load_presets().get(strategy, {})
+        candidate_count = len(preset_data.get("candidate_loads", [])) or 1
         self.root.after(0, lambda c=candidate_count: self.reset_progress(c, f"0/{c}"))
-        self.q.put(f"[strategy] generic candidates; auto_run={auto_run}; candidates={candidate_count}\n")
+        self.q.put(f"[strategy] {strategy}; auto_run={auto_run}; candidates={candidate_count}\n")
         self.q.put("[progress] Building candidates. This is normal; it stops after the listed candidate count.\n")
         args = [
             "make",
@@ -595,10 +626,22 @@ class SpringPeaceGUI:
         if manifest.exists():
             data = json.loads(manifest.read_text(encoding="utf-8-sig"))
             built = [c for c in data.get("candidates", []) if c.get("payload") and c.get("layout_ok") is not False]
-            # Use manifest order. common-arm64-candidates is ordered for 0.1: a800 first, c780 second, then generic fallbacks.
+            # Use manifest order from selected Snapdragon/MTK strategy.
             for c in built:
                 payloads.append(Path(c["payload"]))
         if not payloads:
+            if manifest.exists():
+                try:
+                    data = json.loads(manifest.read_text(encoding="utf-8-sig"))
+                    self.q.put("[target-summary] no runnable payload built. Generator details:\n")
+                    for idx, cand in enumerate(data.get("candidates", []), 1):
+                        load = cand.get("p0_kernel_phys_load", "?")
+                        log_text = (cand.get("generate_log") or cand.get("build_log") or "").strip()
+                        first = log_text.splitlines()[0] if log_text else "no generator log"
+                        self.q.put(f"  {idx}. p0load={load}: {first}\n")
+                    self.q.put("[target-summary] If all entries mention kallsyms markers, this kernel layout needs the loose marker-scan hotfix or a new detector route.\n")
+                except Exception as exc:
+                    self.q.put(f"[target-summary] manifest read error: {exc}\n")
             raise RuntimeError("no runnable payload built")
         self.last_payload = payloads[0]
         shutil.copy2(payloads[0], out / "payload.so")

@@ -1,0 +1,156 @@
+﻿name: Build SpringPeace pre-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Create/update GitHub pre-release"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      release_tag:
+        description: "Release tag used for workflow_dispatch"
+        required: true
+        default: "v0.2-pre"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r .\tools\springpeace-oneclick\requirements.txt
+
+      - name: Download Android platform-tools and NDK r29
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path .\_downloads, .\package-tools\Tools -Force | Out-Null
+
+          $platformZip = '.\_downloads\platform-tools.zip'
+          Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/platform-tools-latest-windows.zip' -OutFile $platformZip
+          Expand-Archive -Path $platformZip -DestinationPath .\package-tools\Tools -Force
+
+          $ndkZip = '.\_downloads\android-ndk-r29-windows.zip'
+          Invoke-WebRequest -Uri 'https://dl.google.com/android/repository/android-ndk-r29-windows.zip' -OutFile $ndkZip
+          Expand-Archive -Path $ndkZip -DestinationPath .\package-tools\Tools -Force
+
+      - name: Prepare exploit engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --depth 1 https://github.com/x-spy/CVE-2026-43499-popsicle.git .\package-tools\Tools\exploit
+          git -C .\package-tools\Tools\exploit apply (Resolve-Path .\tools\springpeace-oneclick\patches\xspy-generate-target-compat.patch)
+          python -m py_compile .\package-tools\Tools\exploit\generate_target.py
+
+      - name: Build SpringPeace.exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\springpeace-oneclick\build_gui_exe.ps1
+          .\tools\springpeace-oneclick\dist\SpringPeace.exe --selftest
+
+      - name: Assemble pre-release package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = '.\release-work\SpringPeace-0.2'
+          New-Item -ItemType Directory -Path $pkg, "$pkg\Lang", "$pkg\unattend", "$pkg\Tools" -Force | Out-Null
+          Copy-Item .\tools\springpeace-oneclick\dist\SpringPeace.exe "$pkg\SpringPeace.exe" -Force
+          Copy-Item .\package-tools\Tools\platform-tools "$pkg\Tools\platform-tools" -Recurse -Force
+          Copy-Item .\package-tools\Tools\android-ndk-r29 "$pkg\Tools\android-ndk-r29" -Recurse -Force
+          Copy-Item .\package-tools\Tools\exploit "$pkg\Tools\exploit" -Recurse -Force
+
+          @{
+            app='SpringPeace'; language='vi';
+            headline='Dựa trên CVE-2026-43499, boot.img → payload để root thiết bị của bạn.';
+            scope='Bản hiện tại mới test trên Xiaomi/OnePlus/OPPO Snapdragon kernel 6.12.x và MTK thử nghiệm kiểu Redmi K80 Ultra. Thiết bị khác có thể không chạy đúng và có thể reboot.';
+            root_note='Root kiểu này không ổn định, phù hợp cho mục đích tạm thời như thay file vào app, unlock bootloader hoặc kiểm thử. Không nên dùng lâu dài; reboot sẽ mất trạng thái.'
+          } | ConvertTo-Json -Depth 4 | Set-Content "$pkg\Lang\vi.json" -Encoding UTF8
+          @{
+            app='SpringPeace'; language='en';
+            headline='Based on CVE-2026-43499, boot.img → payload to root your device.';
+            scope='This build has been tested on Xiaomi/OnePlus/OPPO Snapdragon 6.12.x kernels plus experimental MTK/Redmi K80 Ultra-style payload generation. Other devices may not work and may reboot.';
+            root_note='This root style is not stable. Use it for temporary tasks such as replacing app files, bootloader-unlock workflows, or testing. It is not for long-term daily use; reboot clears the state.'
+          } | ConvertTo-Json -Depth 4 | Set-Content "$pkg\Lang\en.json" -Encoding UTF8
+          '{}' | Set-Content "$pkg\unattend\config.json" -Encoding UTF8
+
+          @'
+          SpringPeace 0.2 pre-release
+          ===========================
+
+          VI: Chạy SpringPeace.exe, chọn boot.img, chọn Snapdragon hoặc MTK thử nghiệm, rồi bấm One-click Root.
+          EN: Run SpringPeace.exe, select boot.img, choose Snapdragon or experimental MTK, then press One-click Root.
+
+          Root tạm thời/temporary root: không ổn định, dùng cho thao tác ngắn; reboot sẽ mất trạng thái.
+          '@ | Set-Content "$pkg\README.txt" -Encoding UTF8
+
+          @'
+          SpringPeace 0.2 pre-release changelog
+          =====================================
+          - Snapdragon candidate sweep.
+          - Experimental MTK candidate sweep seeded from Redmi K80 Ultra preload.so analysis.
+          - Loose kallsyms marker-scan hotfix.
+          - Bundled ADB, Android NDK r29, and patched exploit engine.
+          '@ | Set-Content "$pkg\Changelog.txt" -Encoding UTF8
+
+          $exeHash = (Get-FileHash "$pkg\SpringPeace.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content "$pkg\SpringPeace.exe.sha256" "$exeHash  SpringPeace.exe" -Encoding UTF8
+          New-Item -ItemType Directory -Path .\release-dist -Force | Out-Null
+          tar -a -cf .\release-dist\SpringPeace-0.2-pre.zip -C .\release-work SpringPeace-0.2
+          $zipHash = (Get-FileHash .\release-dist\SpringPeace-0.2-pre.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content .\release-dist\SpringPeace-0.2-pre.zip.sha256 "$zipHash  SpringPeace-0.2-pre.zip" -Encoding UTF8
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpringPeace-0.2-pre
+          path: |
+            release-dist/SpringPeace-0.2-pre.zip
+            release-dist/SpringPeace-0.2-pre.zip.sha256
+          retention-days: 14
+
+      - name: Resolve release tag
+        id: release_vars
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            "tag=${{ inputs.release_tag }}" >> $env:GITHUB_OUTPUT
+            "publish=${{ inputs.publish_release }}" >> $env:GITHUB_OUTPUT
+          } else {
+            "tag=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+            "publish=true" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Create/update pre-release
+        if: steps.release_vars.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_vars.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: SpringPeace 0.2 pre-release
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: |
+            release-dist/SpringPeace-0.2-pre.zip
+            release-dist/SpringPeace-0.2-pre.zip.sha256

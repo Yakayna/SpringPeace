@@ -1,6 +1,8 @@
+﻿diff --git a/generate_target.py b/generate_target.py
+index c67979a..e3c7bac 100755
 --- a/generate_target.py
 +++ b/generate_target.py
-@@ -103,6 +103,8 @@
+@@ -103,6 +103,8 @@ def extract_boot_kernel(path: Path) -> BootInfo:
          flags |= os.O_NOFOLLOW
      if hasattr(os, "O_NONBLOCK"):
          flags |= os.O_NONBLOCK
@@ -9,7 +11,70 @@
      try:
          fd = os.open(path, flags)
      except OSError as exc:
-@@ -456,14 +458,14 @@
+@@ -309,13 +311,19 @@ def locate_token_tables(data: bytes) -> tuple[int, int, tuple[int, ...]]:
+     return next(iter(unique.values()))
+ 
+ 
+-def locate_markers(data: bytes, token_table_off: int) -> tuple[int, tuple[int, ...]]:
++def collect_marker_candidates(
++    data: bytes,
++    token_table_off: int,
++    max_gap: int,
++    require_zero_gap: bool,
++) -> dict[int, tuple[int, ...]]:
+     candidates: dict[int, tuple[int, ...]] = {}
+-    for padding in range(0, 32, 4):
++    max_gap = min(max_gap, token_table_off)
++    for padding in range(0, max_gap + 4, 4):
+         end = token_table_off - padding
+         if end < 8 or end & 3:
+             continue
+-        if padding and any(data[end:token_table_off]):
++        if padding and require_zero_gap and any(data[end:token_table_off]):
+             continue
+         p = end - 4
+         current = u32(data, p)
+@@ -335,13 +343,33 @@ def locate_markers(data: bytes, token_table_off: int) -> tuple[int, tuple[int, .
+         if len(values) < 16 or values[-1] > token_table_off:
+             continue
+         start = end - 4 * len(values)
++        if start < 0:
++            continue
+         candidates[start] = values
+-    if len(candidates) != 1:
+-        fail(
+-            "kallsyms markers 候选不唯一: "
+-            + repr([(hex(k), len(v)) for k, v in candidates.items()])
+-        )
+-    return next(iter(candidates.items()))
++    return candidates
++
++
++def locate_markers(data: bytes, token_table_off: int) -> tuple[int, tuple[int, ...]]:
++    # Upstream kernels usually place kallsyms_markers immediately before
++    # kallsyms_token_table with only tiny zero alignment padding. Some vendor
++    # 6.1/6.12 Android builds keep an extra generated table/alignment blob in
++    # this gap, so fall back to a wider marker scan before giving up.
++    strict = collect_marker_candidates(
++        data, token_table_off, max_gap=32, require_zero_gap=True
++    )
++    if len(strict) == 1:
++        return next(iter(strict.items()))
++    loose = collect_marker_candidates(
++        data, token_table_off, max_gap=4 * 1024 * 1024, require_zero_gap=False
++    )
++    if len(loose) == 1:
++        return next(iter(loose.items()))
++    shown = loose if loose else strict
++    fail(
++        "kallsyms markers ?????: "
++        + repr([(hex(k), len(v)) for k, v in shown.items()])
++        + f"; strict={len(strict)} loose={len(loose)}"
++    )
+ 
+ 
+ def compressed_symbol_end(data: bytes, pos: int, limit: int) -> int:
+@@ -456,14 +484,14 @@ def locate_u32_offset_table(
      image_size: int,
  ) -> tuple[int, tuple[int, ...]]:
      # 当前生成路线支持 CONFIG_KALLSYMS_BASE_RELATIVE 的 u32 RVA 表。
@@ -31,7 +96,7 @@
      search_start = token_index_off + 512
      candidates: list[tuple[int, tuple[int, ...]]] = []
      pos = search_start
-@@ -531,13 +533,16 @@
+@@ -531,13 +559,16 @@ def recover_kallsyms(data: bytes, kernel_size: int, image_size: int) -> Kallsyms
          "kallsyms_offsets": address_table_off,
      }
      for name, expected in self_checks.items():
@@ -55,7 +120,7 @@
      if relative_base_off + 8 > len(data):
          fail("kallsyms_relative_base 位于 payload 外")
      relative_base = u64(data, relative_base_off)
-@@ -545,7 +550,8 @@
+@@ -545,7 +576,8 @@ def recover_kallsyms(data: bytes, kernel_size: int, image_size: int) -> Kallsyms
          fail(f"kallsyms_relative_base 不是规范内核指针: 0x{relative_base:x}")
      if address_table_off + num_syms * 4 != relative_base_off:
          fail("kallsyms offsets 末尾未与 relative_base 自描述符号精确相接")
@@ -65,7 +130,7 @@
          fail("kallsyms_seqs_of_names 未紧随 relative_base")
      if info.one("_text") != 0 or info.one("_stext") != 0x10000:
          fail("_text/_stext 固定点校验失败")
-@@ -1229,37 +1235,79 @@
+@@ -1229,37 +1261,79 @@ def derive_pselect_layout(
  ) -> tuple[dict[str, int], dict[str, str]]:
      names = {
          "pselect_wrapper": "__arm64_sys_pselect6",
@@ -171,7 +236,7 @@
      pi_tree = btf.field("rt_mutex_waiter", "pi_tree")
      waiter_candidates: list[tuple[str, int]] = []
      for reg, imm_text in re.findall(
-@@ -1324,13 +1372,8 @@
+@@ -1324,13 +1398,8 @@ def derive_pselect_layout(
      ]
      if not any(fds_bytes < threshold <= fds_bytes + 8 for threshold in threshold_matches):
          fail("core_sys_select 未证明 profile nfds 走当前栈 fdset 路线")
@@ -187,7 +252,7 @@
      delta = futex_waiter - pselect_word0
      if delta < 0 or delta % 8:
          fail(f"pselect/futex 栈重叠差不是非负 qword: {delta}")
-@@ -1345,6 +1388,8 @@
+@@ -1345,6 +1414,8 @@ def derive_pselect_layout(
          "pselect_buffer_off": pselect_buffer,
          "pselect_route_nfds": route_nfds,
          "fds_bytes": fds_bytes,
